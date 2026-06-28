@@ -64,11 +64,14 @@ def probe_duration(path: Path) -> float:
 def _motion_chain(seconds: float) -> str:
     """Punch-in zoom + subtle hand-held shake, normalized to WxH @ FPS."""
     frames = max(1, int(seconds * FPS))
+    # Aggressive punch-in zoom (1.0 -> 1.30) + a quick over-shoot bounce + bigger
+    # hand-held shake = more motion energy per cut ("dopamine").
     return (
         f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
-        f"zoompan=z='min(1.0+0.20*on/{frames},1.20)':"
+        f"zoompan=z='min(1.0+0.30*on/{frames},1.30)':"
         f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={FPS},"
-        f"crop={W}:{H}:x='8*sin(2*PI*t*6)':y='8*cos(2*PI*t*5)'"
+        f"crop={W}:{H}:x='12*sin(2*PI*t*7)':y='12*cos(2*PI*t*6)',"
+        f"eq=saturation=1.18:contrast=1.08"
     )
 
 
@@ -132,8 +135,8 @@ def _cut_segment(src: Path, start: float, dur: float, idx: int, font: str, tmp: 
                  title: str = "", label: str = "", big_title: bool = False) -> Path | None:
     out = tmp / f"seg_{idx:04d}.mp4"
     chain = [_motion_chain(dur)]
-    # white flash on the first frames of each cut = "pop"
-    chain.append("drawbox=x=0:y=0:w=iw:h=ih:color=white@0.5:t=fill:enable='lt(t,0.06)'")
+    # punchy white flash on the first frames of each cut = "pop"
+    chain.append("drawbox=x=0:y=0:w=iw:h=ih:color=white@0.65:t=fill:enable='lt(t,0.08)'")
     if big_title and title:
         chain.append(
             f"drawtext=fontfile={font}:text='{_esc(title)}':fontsize=96:fontcolor=white:"
