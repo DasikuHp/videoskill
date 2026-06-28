@@ -1,9 +1,13 @@
+import json
 import math
-import os
 import subprocess
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import emit, get_font  # noqa: E402
 
 
 JOB_DIR = Path.cwd()
@@ -15,14 +19,7 @@ FRAMES = FPS * DURATION
 
 
 def font(size, bold=False):
-    candidates = [
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-    ]
-    for path in candidates:
-        if path and os.path.exists(path):
-            return ImageFont.truetype(path, size)
-    return ImageFont.load_default()
+    return get_font(size, bold=bold)
 
 
 FONT_BIG = font(88, True)
@@ -35,15 +32,18 @@ def lerp(a, b, t):
 
 
 def background(t, c1=(7, 12, 28), c2=(22, 32, 58)):
+    # Vertical gradient drawn one horizontal line per row (O(H)) instead of
+    # per-pixel (O(W*H)); ~2M assignments/frame -> ~1080. Big perf win.
     img = Image.new("RGB", (W, H), c1)
-    px = img.load()
+    gd0 = ImageDraw.Draw(img)
     for y in range(H):
         k = y / H
-        r = int(lerp(c1[0], c2[0], k))
-        g = int(lerp(c1[1], c2[1], k))
-        b = int(lerp(c1[2], c2[2], k))
-        for x in range(W):
-            px[x, y] = (r, g, b)
+        color = (
+            int(lerp(c1[0], c2[0], k)),
+            int(lerp(c1[1], c2[1], k)),
+            int(lerp(c1[2], c2[2], k)),
+        )
+        gd0.line([(0, y), (W, y)], fill=color)
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
     for i, (cx, cy, col) in enumerate([
@@ -171,17 +171,27 @@ def render_scene(name, fn):
         "-preset", "medium",
         str(out),
     ]
-    subprocess.run(cmd, check=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
     for p in temp_dir.glob("*.jpg"):
         p.unlink()
     temp_dir.rmdir()
-    print(out)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip()[-500:] or f"ffmpeg failed for {out}")
+    return out
 
 
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for name, fn in SCENES:
-        render_scene(name, fn)
+    artifacts = []
+    try:
+        for name, fn in SCENES:
+            out = render_scene(name, fn)
+            artifacts.append({"type": "video", "path": str(out)})
+        emit({"status": "succeeded", "stage": "local_explainer_broll", "artifacts": artifacts})
+    except Exception as exc:
+        emit({"status": "failed", "stage": "local_explainer_broll", "error": str(exc),
+              "artifacts": artifacts})
+        sys.exit(1)
 
 
 if __name__ == "__main__":

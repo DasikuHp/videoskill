@@ -6,10 +6,10 @@ green-screen background, and cloned voice. The green screen is later
 removed via FFmpeg chroma key in tutorial_composer.py.
 
 Endpoints used:
-    GET  /v2/avatars              — list avatars (find digital twin)
-    GET  /v2/voices               — list voices (find cloned voice)
-    POST /v2/videos               — generate avatar video
-    GET  /v2/videos/{video_id}    — poll generation status
+    GET  /v2/avatars                      — list avatars (find digital twin)
+    GET  /v2/voices                       — list voices (find cloned voice)
+    POST /v2/video/generate               — generate avatar video
+    GET  /v1/video_status.get?video_id=   — poll generation status
 
 Usage:
     from heygen_client import generate_avatar_video, poll_until_ready, download_video
@@ -55,6 +55,20 @@ HEYGEN_VOICE_ID = os.getenv("HEYGEN_VOICE_ID", "")
 HEYGEN_BASE_URL = "https://api.heygen.com"
 
 GREEN_SCREEN_COLOR = "#00FF00"
+
+# resolution + aspect ratio -> pixel dimension for the v2 `dimension` field.
+_RESOLUTION_LONG_EDGE = {"720p": 1280, "1080p": 1920, "4k": 3840}
+
+
+def _dimension_for(resolution: str, aspect_ratio: str) -> Tuple[int, int]:
+    long_edge = _RESOLUTION_LONG_EDGE.get(resolution, 1920)
+    try:
+        aw, ah = (int(v) for v in aspect_ratio.split(":"))
+    except Exception:
+        aw, ah = 16, 9
+    if aw >= ah:  # landscape/square: long edge is width
+        return long_edge, round(long_edge * ah / aw)
+    return round(long_edge * aw / ah), long_edge  # portrait: long edge is height
 
 
 def _headers():
@@ -196,17 +210,28 @@ def generate_avatar_video(
             raise ValueError("No voice available. Set HEYGEN_VOICE_ID or create one at heygen.com")
         vid = voice["voice_id"]
 
+    width, height = _dimension_for(resolution, aspect_ratio)
     payload = {
-        "avatar_id": aid,
-        "voice_id": vid,
-        "script": script,
+        "video_inputs": [
+            {
+                "character": {
+                    "type": "avatar",
+                    "avatar_id": aid,
+                    "avatar_style": "normal",
+                },
+                "voice": {
+                    "type": "text",
+                    "voice_id": vid,
+                    "input_text": script,
+                },
+                "background": {
+                    "type": "color",
+                    "value": background_color,
+                },
+            }
+        ],
+        "dimension": {"width": width, "height": height},
         "title": title,
-        "resolution": resolution,
-        "aspect_ratio": aspect_ratio,
-        "background": {
-            "type": "color",
-            "value": background_color,
-        },
     }
 
     logger.info(f"Generating HeyGen avatar video...")
@@ -219,7 +244,7 @@ def generate_avatar_video(
     for attempt in range(3):
         try:
             resp = requests.post(
-                f"{HEYGEN_BASE_URL}/v2/videos",
+                f"{HEYGEN_BASE_URL}/v2/video/generate",
                 headers=_headers(),
                 json=payload,
                 timeout=60,
@@ -253,10 +278,11 @@ def generate_avatar_video(
 # ═══════════════════════════════════════════════════════════
 
 def get_video_status(video_id: str) -> Dict:
-    """Get current status of a HeyGen video generation job."""
+    """Get current status of a HeyGen video generation job (v1 status endpoint)."""
     resp = requests.get(
-        f"{HEYGEN_BASE_URL}/v2/videos/{video_id}",
+        f"{HEYGEN_BASE_URL}/v1/video_status.get",
         headers=_headers(),
+        params={"video_id": video_id},
         timeout=90,
     )
     resp.raise_for_status()

@@ -1,6 +1,7 @@
 import ffmpeg
 import os
 import re
+import json
 import uuid
 import tempfile
 import logging
@@ -43,7 +44,8 @@ def extract_audio(video_file: str) -> str:
         logger.info(f"✅ Audio extracted to {output_filename}")
         return output_filename
     except ffmpeg.Error as e:
-        logger.error(f"❌ Failed to extract audio: {e.stderr.decode('utf8')}")
+        err = e.stderr.decode('utf8', 'replace') if getattr(e, 'stderr', None) else str(e)
+        logger.error(f"❌ Failed to extract audio: {err}")
         raise
 
 def get_video_dimensions(video_file: str) -> tuple[int, int]:
@@ -60,7 +62,8 @@ def get_video_dimensions(video_file: str) -> tuple[int, int]:
         else:
             raise ValueError("No video stream found in the file.")
     except ffmpeg.Error as e:
-        logger.error(f"❌ Failed to get video dimensions: {e.stderr.decode('utf8')}")
+        err = e.stderr.decode('utf8', 'replace') if getattr(e, 'stderr', None) else str(e)
+        logger.error(f"❌ Failed to get video dimensions: {err}")
         raise
 
 WHISPER_MAX_BYTES = 24 * 1024 * 1024  # 24 MB safety margin (Whisper limit is 25 MB)
@@ -495,7 +498,10 @@ if __name__ == "__main__":
     # --- Hardcoded parameters: set RUN_MODE to "single" (full captioned horizontal) or "vertical_shorts" ---
     RUN_MODE = "single"  # "single" | "vertical_shorts"
 
-    INPUT_VIDEO = "input_videos/example.mp4"
+    # CLI override so the tool is testable: `python3 video_captioner.py <video> [single|vertical_shorts]`
+    INPUT_VIDEO = sys.argv[1] if len(sys.argv) > 1 else "input_videos/example.mp4"
+    if len(sys.argv) > 2:
+        RUN_MODE = sys.argv[2]
 
     # Edit these starts/titles after watching the source video.
     VERTICAL_SEGMENTS: list[tuple[float, str]] = [

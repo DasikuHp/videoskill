@@ -31,6 +31,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import get_font  # noqa: E402
+
 W, H = 1920, 1080
 DEFAULT_SAFE_MARGIN = 90
 DEFAULT_CAPTION_BAND = 170
@@ -62,17 +65,7 @@ def probe_duration(path: Path) -> float:
 
 
 def font(size: int = 28) -> ImageFont.ImageFont:
-    for path in [
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/Library/Fonts/Arial Bold.ttf",
-    ]:
-        if Path(path).exists():
-            try:
-                return ImageFont.truetype(path, size)
-            except Exception:
-                pass
-    return ImageFont.load_default()
+    return get_font(size, bold=True)
 
 
 def fit_frame(src: Image.Image, size: tuple[int, int] = (W, H)) -> Image.Image:

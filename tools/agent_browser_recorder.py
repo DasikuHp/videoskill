@@ -138,10 +138,15 @@ def overlay(page, caption, detail):
             color: white; font-family: Inter, Arial, sans-serif;
             box-shadow: 0 18px 70px rgba(0,0,0,.35);
           `;
-          box.innerHTML = `
-            <div style="font-size:42px;line-height:1;font-weight:1000;letter-spacing:-1px;text-transform:uppercase;">${caption}</div>
-            <div style="font-size:19px;line-height:1.3;color:#dbeafe;margin-top:10px;">${detail}</div>
-          `;
+          // textContent (not innerHTML) so caption/detail from JSON can't inject HTML.
+          const head = document.createElement('div');
+          head.style.cssText = 'font-size:42px;line-height:1;font-weight:1000;letter-spacing:-1px;text-transform:uppercase;';
+          head.textContent = caption;
+          const sub = document.createElement('div');
+          sub.style.cssText = 'font-size:19px;line-height:1.3;color:#dbeafe;margin-top:10px;';
+          sub.textContent = detail;
+          box.appendChild(head);
+          box.appendChild(sub);
           document.body.appendChild(box);
         }
         """,
@@ -162,8 +167,14 @@ def highlight_terms(page, terms):
               const text = node.nodeValue || '';
               const idx = text.toLowerCase().indexOf(lower);
               if (idx < 0 || !node.parentElement || node.parentElement.closest('#agent-caption-overlay')) continue;
+              // Build with DOM nodes + textContent so page text/terms can't inject HTML.
               const wrap = document.createElement('span');
-              wrap.innerHTML = `${text.slice(0, idx)}<mark style="background:#ffef5a;color:#050505;padding:3px 6px;border-radius:5px;font-weight:700;">${text.slice(idx, idx + term.length)}</mark>${text.slice(idx + term.length)}`;
+              const mark = document.createElement('mark');
+              mark.style.cssText = 'background:#ffef5a;color:#050505;padding:3px 6px;border-radius:5px;font-weight:700;';
+              mark.textContent = text.slice(idx, idx + term.length);
+              wrap.appendChild(document.createTextNode(text.slice(0, idx)));
+              wrap.appendChild(mark);
+              wrap.appendChild(document.createTextNode(text.slice(idx + term.length)));
               node.parentElement.replaceChild(wrap, node);
               break;
             }
@@ -193,6 +204,10 @@ def main():
     output_video = Path(args.output).resolve()
     events_path = Path(args.events).resolve() if args.events else output_video.with_name(output_video.stem + "_events.json")
     segments = load_segments(args.segments_json)
+    if not segments:
+        emit({"status": "failed", "stage": "agent_browser_recording",
+              "error": "No segments to record (empty --segments-json)."})
+        return
     events = {"started_at": time.time(), "output_video": str(output_video), "events": [], "segments": segments}
     xvfb = ffmpeg_proc = browser = None
 
@@ -242,6 +257,10 @@ def main():
             context.close()
             browser.close()
             browser = None
+    except Exception as exc:
+        emit({"status": "failed", "stage": "agent_browser_recording",
+              "error": str(exc), "events_path": str(events_path)})
+        raise
     finally:
         events_path.parent.mkdir(parents=True, exist_ok=True)
         events_path.write_text(json.dumps(events, indent=2))

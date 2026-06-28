@@ -97,7 +97,9 @@ FPS = 30
 def generate_narration(
     script: str,
     voice_id: str = DEFAULT_VOICE_ID,
-    model_id: str = "eleven_v3",
+    # Overridable: if the with-timestamps endpoint rejects this id, set
+    # ELEVENLABS_MODEL_ID (e.g. eleven_multilingual_v2) in .env.
+    model_id: str = os.getenv("ELEVENLABS_MODEL_ID", "eleven_v3"),
     stability: float = 0.55,
     similarity_boost: float = 0.75,
     style: float = 0.35,
@@ -159,6 +161,8 @@ def generate_narration(
     char_ends = alignment.get("character_end_times_seconds", [])
 
     word_timestamps = _characters_to_words(characters, char_starts, char_ends)
+    if not word_timestamps:
+        raise RuntimeError("ElevenLabs returned no word timestamps (empty/silent narration?)")
     logger.info(f"Parsed {len(word_timestamps)} word timestamps, total duration: {word_timestamps[-1]['end']:.2f}s")
 
     return audio_path, word_timestamps
@@ -212,11 +216,16 @@ def upload_to_s3(local_path: str, s3_key: str) -> Optional[str]:
         elif local_path.endswith(".mp3"):
             content_type = "audio/mpeg"
 
+        # Modern buckets disable ACLs (Object Ownership = Bucket owner enforced),
+        # where ACL:public-read raises AccessControlListNotSupported. Only send an
+        # ACL when explicitly opted in via S3_OBJECT_ACL.
+        extra_args = {"ContentType": content_type}
+        acl = os.getenv("S3_OBJECT_ACL", "").strip()
+        if acl:
+            extra_args["ACL"] = acl
+
         logger.info(f"Uploading to S3: s3://{bucket}/{s3_key}")
-        s3.upload_file(
-            local_path, bucket, s3_key,
-            ExtraArgs={"ContentType": content_type, "ACL": "public-read"},
-        )
+        s3.upload_file(local_path, bucket, s3_key, ExtraArgs=extra_args)
         url = f"https://{bucket}.s3.{region}.amazonaws.com/{s3_key}"
         logger.info(f"S3 upload complete: {url}")
         return url
@@ -1062,9 +1071,14 @@ if __name__ == "__main__":
     events = sys.argv[2] if len(sys.argv) > 2 else TEST_EVENTS
     script = sys.argv[3] if len(sys.argv) > 3 else TEST_SCRIPT
 
-    result = compose_demo_video(
-        raw_video_path=raw_video,
-        events_path=events,
-        narration_script=script,
-    )
-    print(f"\nResult: {json.dumps(result, indent=2)}")
+    try:
+        result = compose_demo_video(
+            raw_video_path=raw_video,
+            events_path=events,
+            narration_script=script,
+        )
+        print(f"\nResult: {json.dumps(result, indent=2)}")
+        print("RESULT: " + json.dumps(result if isinstance(result, dict) else {"status": "succeeded", "result": result}))
+    except Exception as exc:
+        print("RESULT: " + json.dumps({"status": "failed", "stage": "demo_video_composer", "error": str(exc)}))
+        raise

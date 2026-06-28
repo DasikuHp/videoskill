@@ -99,6 +99,7 @@ existing long-form video into polished video assets. The skill can produce:
 36. **Use modern editorial motion language.** Prefer fast UI inserts, source receipt cards, thin rounded callout boxes, cursor-driven reveals, split screens, headline montages, match cuts, before/after UI, and tight push-ins to exact phrases. Avoid generic stock people, repeated website zooms, slow Ken Burns-only sequences, decorative gradients, and any shot that merely "feels related" without explaining the sentence.
 37. **Run a b-roll layout QC/edit pass before final composition.** Generated images, UI cards, screenshots, and video b-roll are not approved just because they rendered. Before composing the master, run `tools/broll_layout_qc.py` on every b-roll asset to create guided review frames/contact sheets with safe-margin, caption-band, and avatar-PiP overlays. Open/read those frames and mark each asset as `pass`, `crop-edit`, `layout-edit`, `re-render`, or `replace`. Fail any asset where important text/faces are under the PiP, key content is in the caption band, typography feels cramped, spacing is off, edge tangents are awkward, or the visual job is unclear.
 38. **Fix b-roll layout problems in the cheapest order.** First crop/reframe (`scale-to-fill`, `crop`, `x_expr/y_expr`, zoompan start/end), then edit the layout/still (Pillow/Remotion/HTML), then re-render with a corrected prompt, then replace the shot. Do not accept "almost right" generated b-roll if spacing is obviously wrong; spacing/composition errors are taste errors.
+39. **Hold no shot longer than 2.5 seconds (3 seconds absolute max).** Retention in short-form and viral edits is driven by motion. Every ≤2.5s there MUST be a camera/visual change: a hard cut to a new clip, a different crop/angle of the same source, a punch-in zoom, a new b-roll, or a screen event. A single shot held past 3s reads as dead air and tanks watch-time — split it into 2-3 cuts of different crops/clips. For compilation/repurpose edits over real footage, run `tools/fast_cut_montage.py clips ...` which automatically re-cuts every source so no shot exceeds the ceiling and applies a punch-in zoom per segment. Land cuts on the beat where possible. (This is the short-form/dopaminergic counterpart to rule 31's per-still cadence.)
 
 ## Standard workflow
 
@@ -202,7 +203,16 @@ python3 .agents/skills/super-video-maker/tools/demo_video_composer.py
 python3 .agents/skills/super-video-maker/tools/video_captioner.py
 python3 .agents/skills/super-video-maker/tools/ffmpeg_qc.py
 python3 .agents/skills/super-video-maker/tools/broll_layout_qc.py
+python3 .agents/skills/super-video-maker/tools/video_downloader.py --url "<url>" --info-only
+python3 .agents/skills/super-video-maker/tools/viral_hooks.py --topic "<topic>" --platform tiktok
+python3 .agents/skills/super-video-maker/tools/fast_cut_montage.py clips raw1.mp4 raw2.mp4 --max-cut 2.5
+python3 .agents/skills/super-video-maker/tools/music_provider.py elevenlabs-generate --prompt "upbeat" --duration 30
 ```
+
+For viral repurposes (download a source compilation + mine hooks + plan clips),
+run the saved workflow `viral-repurpose` (`.claude/workflows/viral-repurpose.js`).
+Downloading external sources requires the environment's network policy to allow
+the host (e.g. YouTube); a locked-down egress policy will return 403.
 
 ## Result contract
 
