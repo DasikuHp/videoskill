@@ -43,6 +43,70 @@ def _ensure_yt_dlp() -> str:
         sys.exit(2)
 
 
+def _ffprobe_ok(path: Path) -> tuple[bool, dict]:
+    """Confirm a file is a real, decodable video with a video stream."""
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height,codec_name",
+         "-show_entries", "format=duration", "-of", "json", str(path)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return False, {}
+    try:
+        data = json.loads(proc.stdout)
+        st = (data.get("streams") or [{}])[0]
+        dur = float(data.get("format", {}).get("duration") or 0)
+        return bool(st.get("codec_name")) and dur > 0, {
+            "width": st.get("width"), "height": st.get("height"),
+            "codec": st.get("codec_name"), "duration_seconds": round(dur, 2),
+        }
+    except Exception:
+        return False, {}
+
+
+def cmd_direct(args: argparse.Namespace) -> None:
+    """Stream a direct video URL (e.g. raw.githubusercontent.com) over HTTPS.
+
+    More reliable than yt-dlp for plain file URLs and works wherever the egress
+    policy allows the host (GitHub is commonly allowed even when YouTube is not).
+    """
+    import urllib.request
+
+    out_dir = Path(args.output_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    name = args.name or Path(args.url.split("?")[0]).name or f"clip_{int(time.time())}.mp4"
+    dest = out_dir / name
+
+    started = time.time()
+    try:
+        # urllib honors HTTPS_PROXY/HTTP_PROXY from the environment.
+        req = urllib.request.Request(args.url, headers={"User-Agent": "super-video-maker/1.0"})
+        with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as f:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                f.write(chunk)
+    except Exception as exc:
+        emit({"status": "failed", "stage": "download", "error": f"{type(exc).__name__}: {exc}", "url": args.url})
+        sys.exit(1)
+
+    ok, meta = _ffprobe_ok(dest)
+    if not ok:
+        emit({"status": "failed", "stage": "download",
+              "error": "downloaded file is not a decodable video", "path": str(dest)})
+        sys.exit(1)
+
+    emit({
+        "status": "succeeded", "stage": "download",
+        "artifacts": [{"type": "video", "path": str(dest)}],
+        "metrics": {**meta, "size_mb": round(dest.stat().st_size / (1024 * 1024), 2),
+                    "elapsed_s": round(time.time() - started, 1)},
+        "next_action": "feed into fast_cut_montage.py clips",
+    })
+
+
 def cmd_download(args: argparse.Namespace) -> None:
     yt = _ensure_yt_dlp().split()
     out_dir = Path(args.output_dir).resolve()
@@ -135,13 +199,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--write-subs", action="store_true", help="also fetch subtitles/auto-captions")
     p.add_argument("--sub-langs", default="en")
     p.add_argument("--info-only", action="store_true", help="print metadata only, no download")
-    p.set_defaults(func=cmd_download)
+    p.add_argument("--direct", action="store_true",
+                   help="stream a plain file URL over HTTPS (e.g. raw.githubusercontent.com) instead of yt-dlp")
+    p.add_argument("--name", help="output filename for --direct")
     return p
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    args.func(args)
+    if args.direct:
+        cmd_direct(args)
+    else:
+        cmd_download(args)
 
 
 if __name__ == "__main__":

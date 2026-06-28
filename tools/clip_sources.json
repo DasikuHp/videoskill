@@ -1,0 +1,35 @@
+{
+  "_comment": "Curated real video clips hosted on GitHub (reachable even under locked-down egress policies that block YouTube). All CC / open / CV-test footage. Verified reachable 2026-06.",
+  "clips": [
+    {
+      "name": "street-people-bicycle-car.mp4",
+      "url": "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/person-bicycle-car-detection.mp4",
+      "label": "REAL STREET CHAOS",
+      "license": "Intel sample-videos (CV test footage)"
+    },
+    {
+      "name": "store-aisle.mp4",
+      "url": "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/store-aisle-detection.mp4",
+      "label": "CAUGHT ON CAMERA",
+      "license": "Intel sample-videos (CV test footage)"
+    },
+    {
+      "name": "face-closeup.mp4",
+      "url": "https://raw.githubusercontent.com/intel-iot-devkit/sample-videos/master/head-pose-face-detection-female.mp4",
+      "label": "THE REACTION",
+      "license": "Intel sample-videos (CV test footage)"
+    },
+    {
+      "name": "big-buck-bunny.mp4",
+      "url": "https://raw.githubusercontent.com/mediaelement/mediaelement-files/master/big_buck_bunny.mp4",
+      "label": "PLOT TWIST",
+      "license": "Big Buck Bunny (CC-BY, Blender Foundation)"
+    },
+    {
+      "name": "bear.mp4",
+      "url": "https://raw.githubusercontent.com/chromium/chromium/main/media/test/data/bear-1280x720.mp4",
+      "label": "WAIT FOR IT",
+      "license": "Chromium media test data"
+    }
+  ]
+}

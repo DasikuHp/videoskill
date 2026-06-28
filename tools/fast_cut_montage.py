@@ -128,19 +128,39 @@ def cmd_demo(args: argparse.Namespace) -> None:
 
 
 # ── CLIPS MODE ─────────────────────────────────────────────────────
-def _cut_segment(src: Path, start: float, dur: float, idx: int, font: str, tmp: Path) -> Path:
+def _cut_segment(src: Path, start: float, dur: float, idx: int, font: str, tmp: Path,
+                 title: str = "", label: str = "", big_title: bool = False) -> Path | None:
     out = tmp / f"seg_{idx:04d}.mp4"
-    vf = _motion_chain(dur) + ",format=yuv420p"
+    chain = [_motion_chain(dur)]
+    # white flash on the first frames of each cut = "pop"
+    chain.append("drawbox=x=0:y=0:w=iw:h=ih:color=white@0.5:t=fill:enable='lt(t,0.06)'")
+    if big_title and title:
+        chain.append(
+            f"drawtext=fontfile={font}:text='{_esc(title)}':fontsize=96:fontcolor=white:"
+            f"borderw=8:bordercolor=black:box=1:boxcolor=red@0.55:boxborderw=22:"
+            f"x=(w-tw)/2:y=(h-th)/2"
+        )
+    if label:
+        chain.append(
+            f"drawtext=fontfile={font}:text='{_esc(label)}':fontsize=54:fontcolor=yellow:"
+            f"borderw=5:bordercolor=black:box=1:boxcolor=black@0.4:boxborderw=18:"
+            f"x=(w-tw)/2:y=h-150"
+        )
+    chain.append("setsar=1")
+    chain.append("format=yuv420p")
+    # Output seeking (-ss after -i) decodes from start → accurate and robust
+    # against non-keyframe seeks; corruption flags tolerate flaky source clips.
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-        "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(src),
-        "-vf", vf, "-an", "-r", str(FPS),
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-        "-pix_fmt", "yuv420p", str(out),
+        "-fflags", "+discardcorrupt", "-err_detect", "ignore_err",
+        "-i", str(src), "-ss", f"{start:.3f}", "-t", f"{dur:.3f}",
+        "-vf", ",".join(chain), "-an", "-r", str(FPS),
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
+        "-pix_fmt", "yuv420p", "-avoid_negative_ts", "make_zero", str(out),
     ]
     proc = _run(cmd)
-    if proc.returncode != 0 or not out.exists():
-        raise RuntimeError(f"segment {idx} failed: {proc.stderr.strip()[-300:]}")
+    if proc.returncode != 0 or not out.exists() or probe_duration(out) <= 0:
+        return None  # skip this segment instead of aborting the whole montage
     return out
 
 
@@ -155,21 +175,41 @@ def cmd_clips(args: argparse.Namespace) -> None:
         emit({"status": "failed", "stage": "fast_cut_montage", "error": f"clips not found: {missing}"})
         sys.exit(2)
 
+    durations = [probe_duration(s) for s in sources]
+    heads = [0.0 for _ in sources]
+    active = [i for i, d in enumerate(durations) if d > 0]
+    if not active:
+        emit({"status": "failed", "stage": "fast_cut_montage", "error": "no usable footage in inputs"})
+        sys.exit(1)
+
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        segments = []
+        segments: list[Path] = []
         idx = 0
-        for src in sources:
-            dur = probe_duration(src)
-            if dur <= 0:
-                continue
-            n = max(1, math.ceil(dur / max_cut))
-            seg_len = dur / n
-            for k in range(n):
-                segments.append(_cut_segment(src, k * seg_len, seg_len, idx, font, tmp))
-                idx += 1
+        total = 0.0
+        # Round-robin interleave across sources so consecutive cuts differ (variety),
+        # stopping at --target seconds (0 = use everything).
+        while active and (args.target <= 0 or total < args.target) and idx < 600:
+            for i in list(active):
+                if args.target > 0 and total >= args.target:
+                    break
+                start = heads[i]
+                remaining = durations[i] - start
+                if remaining < 0.4:
+                    active.remove(i)
+                    continue
+                seg_len = min(max_cut, remaining)
+                seg = _cut_segment(sources[i], start, seg_len, idx, font, tmp,
+                                   title=args.title, label=args.title,
+                                   big_title=(idx == 0))
+                heads[i] += seg_len
+                if seg:
+                    segments.append(seg)
+                    total += probe_duration(seg)
+                    idx += 1
+
         if not segments:
-            emit({"status": "failed", "stage": "fast_cut_montage", "error": "no usable footage in inputs"})
+            emit({"status": "failed", "stage": "fast_cut_montage", "error": "all segments failed to render"})
             sys.exit(1)
         _finish(segments, out_path, args, cuts=len(segments), max_cut=max_cut)
 
@@ -196,7 +236,7 @@ def _finish(parts: list[Path], out_path: Path, args, cuts: int | None = None, ma
         "-f", "lavfi", "-i", _beat_expr(total),
         "-filter_complex", "[1:a]loudnorm=I=-14:TP=-1.5:LRA=11[a]",
         "-map", "0:v", "-map", "[a]",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22", "-pix_fmt", "yuv420p",
         "-r", str(FPS), "-c:a", "aac", "-b:a", "192k", "-shortest",
         str(out_path),
     ]
@@ -233,12 +273,19 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("inputs", nargs="+", help="source video files")
     c.add_argument("--output", default="outputs/montage.mp4")
     c.add_argument("--max-cut", type=float, default=2.5, help="max seconds per shot (hard ceiling 3.0)")
+    c.add_argument("--target", type=float, default=0.0, help="target total seconds (0 = use everything)")
+    c.add_argument("--title", default="", help="theme title (big intro) + persistent label")
+    c.add_argument("--width", type=int, default=1280, help="output width (clips default 1280)")
+    c.add_argument("--height", type=int, default=720, help="output height (clips default 720)")
     c.set_defaults(func=cmd_clips)
     return p
 
 
 def main() -> None:
+    global W, H
     args = build_parser().parse_args()
+    if getattr(args, "width", None):
+        W, H = args.width, args.height
     args.func(args)
 
 
