@@ -29,9 +29,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import emit  # noqa: E402
 
 
+_BIN_DIR = Path(__file__).resolve().parent / "bin"
+
+
+def _ffbin(name: str) -> str:
+    """Vendored ffmpeg/ffprobe (win64 .exe or linux static) if present, else PATH."""
+    cand = _BIN_DIR / (f"{name}.exe" if sys.platform == "win32" else name)
+    return str(cand) if cand.is_file() else name
+
+
 def _ensure_yt_dlp() -> str:
     # vendored self-contained zipapp: works with any python3, no pip install
-    vendored = Path(__file__).resolve().parent / "bin" / "yt-dlp"
+    vendored = _BIN_DIR / "yt-dlp"
     if vendored.is_file():
         return f"{sys.executable} {vendored}"
     exe = shutil.which("yt-dlp")
@@ -50,7 +59,7 @@ def _ensure_yt_dlp() -> str:
 def _ffprobe_ok(path: Path) -> tuple[bool, dict]:
     """Confirm a file is a real, decodable video with a video stream."""
     proc = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+        [_ffbin("ffprobe"), "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height,codec_name",
          "-show_entries", "format=duration", "-of", "json", str(path)],
         capture_output=True, text=True,
@@ -151,6 +160,8 @@ def cmd_download(args: argparse.Namespace) -> None:
     out_template = str(out_dir / "%(title).80s-%(id)s.%(ext)s")
     cmd = [*yt, "--no-playlist", "--no-warnings", "--restrict-filenames",
            "-o", out_template, "--print", "after_move:filepath"]
+    if _ffbin("ffmpeg") != "ffmpeg":
+        cmd += ["--ffmpeg-location", str(_BIN_DIR)]
 
     if args.audio_only:
         cmd += ["-x", "--audio-format", "mp3", "--audio-quality", "0"]
