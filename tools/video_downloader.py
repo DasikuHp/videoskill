@@ -30,6 +30,10 @@ from _common import emit  # noqa: E402
 
 
 def _ensure_yt_dlp() -> str:
+    # vendored self-contained zipapp: works with any python3, no pip install
+    vendored = Path(__file__).resolve().parent / "bin" / "yt-dlp"
+    if vendored.is_file():
+        return f"{sys.executable} {vendored}"
     exe = shutil.which("yt-dlp")
     if exe:
         return exe
